@@ -86,9 +86,17 @@ a { color: var(--ink); }
 .tile:hover .label, .tile:focus-visible .label { background: var(--solid); color: var(--bg); }
 .tile:hover .label small, .tile:focus-visible .label small { color: var(--bg); }
 
-/* loading state: pulsing squares until the playlist (and each cover) arrives */
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-.tile--skeleton, .tile.is-pending { animation: pulse 1.4s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 80ms); }
+/* loading state: grey squares with a light band sliding across, until the
+   playlist (and then each cover) arrives */
+.tile--skeleton, .tile.is-pending { background: #C6C6C6; }
+.tile--skeleton::after, .tile.is-pending::after {
+  content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: linear-gradient(100deg, rgba(240,240,240,0) 25%, rgba(240,240,240,.85) 50%, rgba(240,240,240,0) 75%);
+  transform: translateX(-100%);
+  animation: shimmer 1.4s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
 .tile.is-pending .label { visibility: hidden; }
 .tile img { opacity: 0; }
 .tile img.is-loaded { opacity: .55; }
