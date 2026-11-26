@@ -1,12 +1,15 @@
 // GET /api/playlist
-// Fetches the portfolio playlist from Spotify on the server, so the Spotify
-// client secret never reaches the browser. Responses are cached at the edge.
+// Reads the portfolio playlist from Spotify on the server, so no Spotify keys
+// reach the browser. Responses are cached at the edge.
 //
-// Required environment variables (Cloudflare Pages → Settings → Variables and Secrets):
-//   SPOTIFY_CLIENT_ID      (plain text or secret)
-//   SPOTIFY_CLIENT_SECRET  (secret)
-// Optional:
-//   SPOTIFY_PLAYLIST_ID    (defaults to the portfolio playlist below)
+// Cloudflare Pages → Settings → Variables and Secrets:
+//   SPOTIFY_CLIENT_ID       required
+//   SPOTIFY_CLIENT_SECRET   required (secret)
+//   SPOTIFY_REFRESH_TOKEN   required since Spotify's Feb 2026 rules (secret):
+//                           lets the site read the playlist as its owner.
+//                           Get it once via /api/spotify-login (see README).
+//   SPOTIFY_PLAYLIST_ID     optional, defaults to the portfolio playlist
+import { tokenRequest, spotifyError } from '../../lib/spotify.js';
 
 const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
 const CACHE_SECONDS = 60 * 60 * 6; // 6 hours
@@ -23,11 +26,11 @@ export async function onRequestGet({ request, env, waitUntil }) {
   }
 
   try {
-    const token = await getToken(env.SPOTIFY_CLIENT_ID, env.SPOTIFY_CLIENT_SECRET);
+    const token = await getAccessToken(env);
     const items = await getAllItems(env.SPOTIFY_PLAYLIST_ID || DEFAULT_PLAYLIST, token);
 
     const tracks = items
-      .map((item) => item && item.track)
+      .map((item) => item.track)
       .filter((t) => t && t.id)
       .map((t) => ({
         artist: (t.artists && t.artists[0] && t.artists[0].name) || 'Unknown Artist',
@@ -36,7 +39,7 @@ export async function onRequestGet({ request, env, waitUntil }) {
         image: pickImage(t.album && t.album.images),
       }));
 
-    const artists = [...new Set(items.flatMap((item) => (item && item.track && item.track.artists || []).map((a) => a.name)))]
+    const artists = [...new Set(items.flatMap((item) => (item.track && item.track.artists || []).map((a) => a.name)))]
       .filter((name) => name && !HIDDEN_ARTISTS.has(name))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
@@ -46,23 +49,21 @@ export async function onRequestGet({ request, env, waitUntil }) {
     waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (err) {
-    // The reason is Spotify's own error text (e.g. "token 400: invalid_client"); it never contains the keys.
+    // The reason is Spotify's own error text (e.g. "token 400: invalid_grant"); it never contains the keys.
     console.error('playlist failed:', err.message);
     return json({ error: 'Could not load playlist.', reason: err.message }, 502);
   }
 }
 
-async function getToken(id, secret) {
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Authorization: 'Basic ' + btoa(`${id}:${secret}`),
-    },
-    body: 'grant_type=client_credentials',
-  });
-  if (!res.ok) throw new Error(`token ${res.status}: ${await spotifyError(res)}`);
-  const data = await res.json();
+// As the playlist owner when a refresh token is set; otherwise as the app,
+// which Spotify only allows for older apps.
+async function getAccessToken(env) {
+  const data = env.SPOTIFY_REFRESH_TOKEN
+    ? await tokenRequest(env, { grant_type: 'refresh_token', refresh_token: env.SPOTIFY_REFRESH_TOKEN })
+    : await tokenRequest(env, { grant_type: 'client_credentials' });
+  if (data.refresh_token && env.SPOTIFY_REFRESH_TOKEN && data.refresh_token !== env.SPOTIFY_REFRESH_TOKEN) {
+    console.warn('Spotify issued a new refresh token; the stored one may stop working. Redo /api/spotify-login if so.');
+  }
   return data.access_token;
 }
 
@@ -101,18 +102,6 @@ async function pageThrough(url, token, pick) {
     url = page.next;
   }
   return out;
-}
-
-// Spotify's error message, kept short: e.g. "invalid_client" or "Invalid playlist Id".
-async function spotifyError(res) {
-  const text = await res.text().catch(() => '');
-  try {
-    const body = JSON.parse(text);
-    const e = body.error;
-    return String((e && e.message) || body.error_description || e || text).slice(0, 200);
-  } catch {
-    return text.slice(0, 200);
-  }
 }
 
 // Prefer the ~640px cover; fall back to whatever is there.
