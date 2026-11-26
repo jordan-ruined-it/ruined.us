@@ -66,18 +66,41 @@ async function getToken(id, secret) {
   return data.access_token;
 }
 
+// Spotify renamed the playlist endpoint in Feb 2026 (/tracks → /items, track → item).
+// Try the new one first; fall back to the old one for apps that still have it.
 async function getAllItems(playlistId, token) {
-  const fields = 'items(track(id,name,external_urls,artists(name),album(images))),next';
-  let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&fields=${encodeURIComponent(fields)}`;
-  const items = [];
+  try {
+    return await pageThrough(
+      `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`,
+      token,
+      (entry) => entry && (entry.item || entry.track),
+    );
+  } catch (err) {
+    try {
+      return await pageThrough(
+        `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`,
+        token,
+        (entry) => entry && entry.track,
+      );
+    } catch {
+      throw err; // report the /items error, which is the current endpoint
+    }
+  }
+}
+
+async function pageThrough(url, token, pick) {
+  const out = [];
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`playlist ${res.status}: ${await spotifyError(res)}`);
     const page = await res.json();
-    items.push(...(page.items || []));
+    for (const entry of page.items || []) {
+      const track = pick(entry);
+      if (track) out.push({ track });
+    }
     url = page.next;
   }
-  return items;
+  return out;
 }
 
 // Spotify's error message, kept short: e.g. "invalid_client" or "Invalid playlist Id".
