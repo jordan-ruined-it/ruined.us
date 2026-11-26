@@ -1,12 +1,13 @@
 // GET /api/playlist            whole playlist + artist list (info page)
 // GET /api/playlist?scope=grid  first 13 tracks (home page)
 //
-// The site keeps the latest playlist it has seen (the "state") and always answers
-// from it straight away. In the background, at most once a minute, it asks Spotify
-// one cheap question: "has the playlist changed?" (its snapshot_id). Only when the
-// answer is yes does it download the playlist again and save the new state.
-// So a normal minute costs 0–1 Spotify calls no matter how many people visit,
-// and a playlist change costs a few calls once.
+// The site keeps the latest playlist it has seen (the "state").
+// Requests WITHOUT ?check=1 (clicking around inside the site) are answered from
+// the state and never touch Spotify.
+// Requests WITH ?check=1 (someone just arrived on the home or info page) ask
+// Spotify one cheap question first: "has the playlist changed?" (its snapshot_id).
+// Only if it has is the playlist downloaded again and saved as the new state.
+// So an arrival costs 1 Spotify call, and a playlist change costs a few more, once.
 //
 // If Spotify says "too many requests", the site waits as long as Spotify asks
 // before calling again, and keeps serving the saved state meanwhile.
@@ -24,10 +25,10 @@ const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
 const HIDDEN_ARTISTS = new Set(['jordan_ruined_it']);
 const GRID_TRACKS = 13;
 const SPOTIFY_TIMEOUT_MS = 6000;
-const CHECK_EVERY_MS = 60 * 1000;          // ask "has it changed?" at most once a minute
+const MIN_GAP_MS = 20 * 1000;              // guard: arrivals within 20s of a check reuse its answer
 const STATE_KEEP_SECONDS = 60 * 60 * 24 * 30;
 
-export async function onRequestGet({ request, env, waitUntil }) {
+export async function onRequestGet({ request, env }) {
   const grid = new URL(request.url).searchParams.get('scope') === 'grid';
   const cache = typeof caches !== 'undefined' ? caches.default : null;
   const key = (name) => new Request(new URL(`/api/playlist/_${name}`, request.url).toString());
@@ -48,13 +49,18 @@ export async function onRequestGet({ request, env, waitUntil }) {
     return json({ error: 'Spotify credentials are not configured.' }, 500);
   }
 
+  const wantsCheck = new URL(request.url).searchParams.get('check') === '1';
   const state = await store.get('state');
   if (state) {
-    // answer now from what we have; check Spotify in the background if it's time
-    if (Date.now() - (state.checkedAt || 0) > CHECK_EVERY_MS) {
-      waitUntil(refresh(env, store, state).catch((err) => console.error('playlist check failed:', err.message)));
+    // inside-the-site click, or someone just checked: answer from the saved state
+    if (!wantsCheck || Date.now() - (state.checkedAt || 0) < MIN_GAP_MS) return shape(state);
+    // fresh arrival: ask Spotify whether it changed; if Spotify is slow or refuses, use the saved state
+    try {
+      return shape(await refresh(env, store, state));
+    } catch (err) {
+      console.error('playlist check failed:', err.message);
+      return shape(state);
     }
-    return shape(state);
   }
 
   // nothing saved yet (first visit ever, or the cache was cleared): fetch now

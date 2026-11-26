@@ -17,7 +17,9 @@
   if (artists && saved && saved.artists && saved.artists.length) artists.textContent = saved.artists.join('  /  ');
 
   // 2. ask the site for the latest; only redraw if something actually changed
-  var url = grid ? '/api/playlist?scope=grid' : '/api/playlist';
+  // Only someone arriving from outside the site (or reloading) asks the site to check Spotify for
+  // changes; clicking between pages here just reuses what the site already has.
+  var url = (grid ? '/api/playlist?scope=grid' : '/api/playlist?') + (arrivedFresh() ? '&check=1' : '');
   var attempt = 0;
   load();
 
@@ -37,11 +39,20 @@
         } else if (!shown && attempt < 5) {
           // nothing on screen yet: keep the loading squares and try again (3s, 6s, 12s, 24s, 48s)
           attempt++;
+          url = url.replace('&check=1', '');
           setTimeout(load, 1500 * Math.pow(2, attempt));
         }
       });
   }
 
+  function arrivedFresh() {
+    try {
+      var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (nav && nav.type === 'reload') return true;
+      if (nav && nav.type === 'back_forward') return false;
+      return !document.referrer || new URL(document.referrer).origin !== location.origin;
+    } catch (e) { return true; }
+  }
   function sig(tracks) {
     return tracks.slice(0, TILE_COUNT).map(function (t) { return t.url + '|' + t.image; }).join(',');
   }
