@@ -62,7 +62,8 @@ export async function onRequestGet({ request, env, waitUntil }) {
       const body = await last.json();
       return json({ ...body, stale: true, reason: err.message });
     }
-    return json({ error: 'Could not load playlist.', reason: err.message }, 502);
+    // 503, not 502: on ruined.us Cloudflare replaces a 502 with its own error page and hides the reason
+    return json({ error: 'Could not load playlist.', reason: err.message }, 503, { 'Retry-After': '30' });
   }
 }
 
