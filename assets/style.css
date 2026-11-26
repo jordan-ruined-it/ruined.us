@@ -86,6 +86,16 @@ a { color: var(--ink); }
 .tile:hover .label, .tile:focus-visible .label { background: var(--solid); color: var(--bg); }
 .tile:hover .label small, .tile:focus-visible .label small { color: var(--bg); }
 
+/* loading state: pulsing squares until the playlist (and each cover) arrives */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.tile--skeleton, .tile.is-pending { animation: pulse 1.4s ease-in-out infinite; animation-delay: calc(var(--i, 0) * 80ms); }
+.tile.is-pending .label { visibility: hidden; }
+.tile img { opacity: 0; }
+.tile img.is-loaded { opacity: .55; }
+.tile:hover img.is-loaded, .tile:focus-visible img.is-loaded { opacity: 1; }
+.tile--in { animation: tile-in .35s ease both; animation-delay: calc(var(--i, 0) * 30ms); }
+@keyframes tile-in { from { opacity: 0; } to { opacity: 1; } }
+
 .playlist {
   display: flex; align-items: center; justify-content: center; min-height: 64px; margin-top: 24px;
   border: 1px solid var(--solid); font-family: var(--display); font-size: 28px; letter-spacing: 1px; text-decoration: none;
@@ -134,5 +144,5 @@ a { color: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  * { transition: none !important; }
+  * { transition: none !important; animation: none !important; }
 }
