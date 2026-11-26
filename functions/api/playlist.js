@@ -1,6 +1,6 @@
 // GET /api/playlist
 // Reads the portfolio playlist from Spotify on the server, so no Spotify keys
-// reach the browser. Responses are cached at the edge.
+// reach the browser. Not cached: every request reads the playlist fresh.
 //
 // Cloudflare Pages → Settings → Variables and Secrets:
 //   SPOTIFY_CLIENT_ID       required
@@ -12,15 +12,9 @@
 import { tokenRequest, spotifyError } from '../../lib/spotify.js';
 
 const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
-const CACHE_SECONDS = 60 * 60 * 6; // 6 hours
 const HIDDEN_ARTISTS = new Set(['jordan_ruined_it']);
 
-export async function onRequestGet({ request, env, waitUntil }) {
-  const cache = caches.default;
-  const cacheKey = new Request(new URL('/api/playlist', request.url).toString());
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-
+export async function onRequestGet({ env }) {
   if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET) {
     return json({ error: 'Spotify credentials are not configured.' }, 500);
   }
@@ -43,27 +37,34 @@ export async function onRequestGet({ request, env, waitUntil }) {
       .filter((name) => name && !HIDDEN_ARTISTS.has(name))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-    const response = json({ tracks, artists }, 200, {
-      'Cache-Control': `public, max-age=600, s-maxage=${CACHE_SECONDS}`,
-    });
-    waitUntil(cache.put(cacheKey, response.clone()));
-    return response;
+    return json({ tracks, artists });
   } catch (err) {
     // The reason is Spotify's own error text (e.g. "token 400: invalid_grant"); it never contains the keys.
     console.error('playlist failed:', err.message);
+    memo = { token: null, expires: 0, key: '' }; // get a fresh login next time
     return json({ error: 'Could not load playlist.', reason: err.message }, 502);
   }
 }
 
+// Spotify's access token lasts an hour. Keep it in memory and reuse it until
+// shortly before it expires, so each visit is one Spotify call, not two.
+// (Only the login is reused; the playlist itself is always fetched fresh.)
+let memo = { token: null, expires: 0, key: '' };
+
 // As the playlist owner when a refresh token is set; otherwise as the app,
 // which Spotify only allows for older apps.
 async function getAccessToken(env) {
+  const key = `${env.SPOTIFY_CLIENT_ID}:${env.SPOTIFY_REFRESH_TOKEN || ''}`;
+  if (memo.token && memo.key === key && Date.now() < memo.expires) return memo.token;
+
   const data = env.SPOTIFY_REFRESH_TOKEN
     ? await tokenRequest(env, { grant_type: 'refresh_token', refresh_token: env.SPOTIFY_REFRESH_TOKEN })
     : await tokenRequest(env, { grant_type: 'client_credentials' });
   if (data.refresh_token && env.SPOTIFY_REFRESH_TOKEN && data.refresh_token !== env.SPOTIFY_REFRESH_TOKEN) {
     console.warn('Spotify issued a new refresh token; the stored one may stop working. Redo /api/spotify-login if so.');
   }
+  const lifetime = Number(data.expires_in) || 3600;
+  memo = { token: data.access_token, expires: Date.now() + (lifetime - 300) * 1000, key };
   return data.access_token;
 }
 
@@ -114,6 +115,6 @@ function pickImage(images) {
 function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   });
 }
