@@ -46,7 +46,9 @@ export async function onRequestGet({ request, env, waitUntil }) {
     waitUntil(cache.put(cacheKey, response.clone()));
     return response;
   } catch (err) {
-    return json({ error: 'Could not load playlist.' }, 502);
+    // The reason is Spotify's own error text (e.g. "token 400: invalid_client"); it never contains the keys.
+    console.error('playlist failed:', err.message);
+    return json({ error: 'Could not load playlist.', reason: err.message }, 502);
   }
 }
 
@@ -59,7 +61,7 @@ async function getToken(id, secret) {
     },
     body: 'grant_type=client_credentials',
   });
-  if (!res.ok) throw new Error(`token ${res.status}`);
+  if (!res.ok) throw new Error(`token ${res.status}: ${await spotifyError(res)}`);
   const data = await res.json();
   return data.access_token;
 }
@@ -70,12 +72,24 @@ async function getAllItems(playlistId, token) {
   const items = [];
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`playlist ${res.status}`);
+    if (!res.ok) throw new Error(`playlist ${res.status}: ${await spotifyError(res)}`);
     const page = await res.json();
     items.push(...(page.items || []));
     url = page.next;
   }
   return items;
+}
+
+// Spotify's error message, kept short: e.g. "invalid_client" or "Invalid playlist Id".
+async function spotifyError(res) {
+  const text = await res.text().catch(() => '');
+  try {
+    const body = JSON.parse(text);
+    const e = body.error;
+    return String((e && e.message) || body.error_description || e || text).slice(0, 200);
+  } catch {
+    return text.slice(0, 200);
+  }
 }
 
 // Prefer the ~640px cover; fall back to whatever is there.
