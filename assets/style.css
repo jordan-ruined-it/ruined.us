@@ -124,6 +124,9 @@ a { color: var(--ink); }
 @media (max-width: 640px) {
   .grid--3 { grid-template-columns: minmax(0, 1fr); }
 }
+.features { margin: 0 auto; padding: 0; max-width: 600px; list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 15px; line-height: 1.7; color: var(--ink-soft); }
+.features li { display: flex; gap: 12px; }
+.features li::before { content: '–'; color: var(--ink); }
 .shot { display: block; width: 100%; height: auto; }
 .btn--disabled { background: transparent; color: var(--muted); border-color: var(--rule); cursor: default; }
 .btn--disabled:hover { background: transparent; color: var(--muted); }
