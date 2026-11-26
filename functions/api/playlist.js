@@ -1,9 +1,10 @@
 // GET /api/playlist            whole playlist + artist list (info page)
 // GET /api/playlist?scope=grid  first 13 tracks only (home page): one Spotify call, fast
 // Reads the playlist from Spotify on the server, so no Spotify keys reach the browser.
-// Every request reads Spotify fresh. If Spotify fails or is slow, the last good
-// answer is served instead (marked "stale": true), so the page never falls back
-// to an old hard-coded list.
+// Visitors share one Spotify call per minute, so playlist changes show within a
+// minute without flooding Spotify. If Spotify says "too many requests", the site
+// waits as long as Spotify asks before calling again. If Spotify fails or is slow,
+// the last good answer is served instead (marked "stale": true).
 //
 // Cloudflare Pages → Settings → Variables and Secrets:
 //   SPOTIFY_CLIENT_ID       required
@@ -18,17 +19,30 @@ const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
 const HIDDEN_ARTISTS = new Set(['jordan_ruined_it']);
 const GRID_TRACKS = 13;
 const SPOTIFY_TIMEOUT_MS = 6000;
+const SHARED_SECONDS = 60;   // all visitors within the same minute share one Spotify call
 
 export async function onRequestGet({ request, env, waitUntil }) {
   const scope = new URL(request.url).searchParams.get('scope') === 'grid' ? 'grid' : 'all';
   const lastGoodKey = new Request(new URL(`/api/playlist/last-good?scope=${scope}`, request.url).toString());
   const cache = typeof caches !== 'undefined' ? caches.default : null;
 
+  const freshKey = new Request(new URL(`/api/playlist/fresh?scope=${scope}`, request.url).toString());
+  const coolKey = new Request(new URL('/api/playlist/cooldown', request.url).toString());
+
   if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET) {
     return json({ error: 'Spotify credentials are not configured.' }, 500);
   }
 
+  if (cache) {
+    // someone already asked Spotify in the last minute: reuse that answer
+    const fresh = await cache.match(freshKey).catch(() => null);
+    if (fresh) return json(await fresh.json());
+  }
+
   try {
+    if (cache && (await cache.match(coolKey).catch(() => null))) {
+      throw new Error('playlist 429: waiting for Spotify’s rate limit to lift');
+    }
     const token = await getAccessToken(env);
     const items = await getAllItems(env.SPOTIFY_PLAYLIST_ID || DEFAULT_PLAYLIST, token, scope === 'grid' ? GRID_TRACKS : Infinity);
 
@@ -50,13 +64,19 @@ export async function onRequestGet({ request, env, waitUntil }) {
     if (cache) {
       // remember this answer for a week, to fall back on if Spotify has a bad moment
       const keep = json(body, 200, { 'Cache-Control': 'public, max-age=604800' });
-      waitUntil(cache.put(lastGoodKey, keep).catch(() => {}));
+      const share = json(body, 200, { 'Cache-Control': `public, max-age=${SHARED_SECONDS}` });
+      waitUntil(Promise.all([cache.put(lastGoodKey, keep), cache.put(freshKey, share)]).catch(() => {}));
     }
     return json(body);
   } catch (err) {
     // The reason is Spotify's own error text (e.g. "playlist 429: API rate limit exceeded"); it never contains the keys.
     console.error('playlist failed:', err.message);
     memo = { token: null, expires: 0, key: '' }; // get a fresh login next time
+    if (cache && err.retryAfter) {
+      // Spotify said how long to back off: don't call it again until then (capped at a day)
+      const secs = Math.min(86400, Math.max(30, err.retryAfter));
+      waitUntil(cache.put(coolKey, new Response('cooling down', { headers: { 'Cache-Control': `public, max-age=${secs}` } })).catch(() => {}));
+    }
     const last = cache ? await cache.match(lastGoodKey).catch(() => null) : null;
     if (last) {
       const body = await last.json();
@@ -108,7 +128,7 @@ async function getAllItems(playlistId, token, max = Infinity) {
       max,
     );
   } catch (err) {
-    if (/^timeout/.test(err.message)) throw err; // Spotify is slow, not refusing: don't wait twice
+    if (/^timeout/.test(err.message) || err.retryAfter) throw err; // slow or rate-limited: don't make a second call
     try {
       return await pageThrough(
         `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${Math.min(100, max)}`,
@@ -126,7 +146,11 @@ async function pageThrough(url, token, pick, max = Infinity) {
   const out = [];
   while (url && out.length < max) {
     const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error(`playlist ${res.status}: ${await spotifyError(res)}`);
+    if (!res.ok) {
+      const err = new Error(`playlist ${res.status}: ${await spotifyError(res)}`);
+      if (res.status === 429) err.retryAfter = Number(res.headers.get('Retry-After')) || 60;
+      throw err;
+    }
     const page = await res.json();
     for (const entry of page.items || []) {
       const track = pick(entry);
