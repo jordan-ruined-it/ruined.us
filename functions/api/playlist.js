@@ -79,8 +79,19 @@ async function refresh(env, store, state) {
   if (refreshing) return refreshing;                       // one check at a time per server
   refreshing = (async () => {
     if (await store.get('cooldown')) throw new Error('playlist 429: waiting for Spotify’s rate limit to lift');
-    if (state && (await store.get('checking'))) return state; // another server is already checking
-    await store.put('checking', 1, 20);
+    if (await store.get('checking')) {
+      // another server is already asking Spotify: reuse what we have, or let the visitor's page retry shortly
+      if (state) return state;
+      throw new Error('busy: another visitor is loading the playlist, try again in a moment');
+    }
+    // claim the job with our own id, then make sure we actually won it
+    const me = crypto.randomUUID();
+    await store.put('checking', me, 20);
+    await new Promise((r) => setTimeout(r, 75 + Math.random() * 75));
+    if ((await store.get('checking')) !== me) {
+      if (state) return state;
+      throw new Error('busy: another visitor is loading the playlist, try again in a moment');
+    }
     try {
       const playlistId = env.SPOTIFY_PLAYLIST_ID || DEFAULT_PLAYLIST;
       const token = await getAccessToken(env);
