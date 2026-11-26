@@ -1,17 +1,22 @@
-// The work grid starts as loading squares and fills in from the live Spotify
-// playlist (/api/playlist). Each tile keeps its loading shimmer until its cover
-// has loaded, then fades in. There is no hard-coded track list: if the API
-// can't answer, the loading squares stay up and it retries in the background.
+// The work grid shows the last playlist this browser saw (saved in localStorage)
+// immediately, then asks /api/playlist for the latest and redraws only if it
+// changed. First-time visitors see loading squares until the playlist arrives.
+// Each tile keeps its loading shimmer until its cover has loaded, then fades in.
 (function () {
   var grid = document.getElementById('grid');
   var artists = document.getElementById('artists');
   if (!grid && !artists) return;
 
   var TILE_COUNT = 13; // 1 featured + 12 squares
+  var STORE_KEY = 'ruined.playlist.v1';
 
+  // 1. show the last playlist this browser saw, straight away (covers usually come from the browser's cache)
+  var saved = read();
+  var shown = '';
+  if (grid && saved && saved.tracks && saved.tracks.length) { renderGrid(saved.tracks.slice(0, TILE_COUNT)); shown = sig(saved.tracks); }
+  if (artists && saved && saved.artists && saved.artists.length) artists.textContent = saved.artists.join('  /  ');
 
-  // home page only needs the first 13 tracks (one quick Spotify call);
-  // the info page needs the whole playlist for its artist list
+  // 2. ask the site for the latest; only redraw if something actually changed
   var url = grid ? '/api/playlist?scope=grid' : '/api/playlist';
   var attempt = 0;
   load();
@@ -25,16 +30,33 @@
       .then(function (data) {
         clearTimeout(timer);
         var ok = data && data.tracks && data.tracks.length;
-        if (grid && ok) renderGrid(data.tracks.slice(0, TILE_COUNT));
-        if (artists && data && data.artists && data.artists.length) {
-          artists.textContent = data.artists.join('  /  ');
-        }
-        // no answer: the loading squares stay up and we quietly try again (3s, 6s, 12s… up to a minute apart)
-        if (!ok && attempt < 8) {
+        if (ok) {
+          if (grid && sig(data.tracks) !== shown) { renderGrid(data.tracks.slice(0, TILE_COUNT)); shown = sig(data.tracks); }
+          if (artists && data.artists && data.artists.length) artists.textContent = data.artists.join('  /  ');
+          write(data);
+        } else if (!shown && attempt < 5) {
+          // nothing on screen yet: keep the loading squares and try again (3s, 6s, 12s, 24s, 48s)
           attempt++;
-          setTimeout(load, Math.min(60000, 1500 * Math.pow(2, attempt)));
+          setTimeout(load, 1500 * Math.pow(2, attempt));
         }
       });
+  }
+
+  function sig(tracks) {
+    return tracks.slice(0, TILE_COUNT).map(function (t) { return t.url + '|' + t.image; }).join(',');
+  }
+  function read() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function write(data) {
+    try {
+      var prev = read() || {};
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        tracks: data.tracks.slice(0, TILE_COUNT),
+        artists: data.artists || prev.artists || null,
+        updatedAt: data.updatedAt || null
+      }));
+    } catch (e) { /* storage full or blocked: fine, we just won't have a head start next time */ }
   }
 
   function renderGrid(tracks) {

@@ -13,7 +13,8 @@ assets/site.js          swaps the static work grid / artist list for live Spotif
 assets/RiverSHINE.ttf   display font
 assets/icon.svg        site icon (favicon.ico and apple-touch-icon.png at the root)
 assets/studio.jpg       studio photo for /info  (add this file)
-functions/api/playlist.js   GET /api/playlist → { tracks, artists }, read fresh on every visit (no cache)
+functions/api/playlist.js   GET /api/playlist → { tracks, artists }: answers from the saved playlist,
+                            checks Spotify for changes at most once a minute (snapshot_id)
 functions/api/spotify-login.js, functions/callback.js   one-time Spotify login (only while SPOTIFY_SETUP=on)
 lib/spotify.js              shared Spotify helpers
 _headers                cache + security headers
