@@ -42,6 +42,7 @@ a { color: var(--ink); }
 /* nav */
 .nav { display: flex; justify-content: flex-end; gap: 24px; padding-top: 20px; font-size: 13px; }
 .nav a { color: var(--muted); text-decoration: none; padding: 12px 0; }
+.nav .back { margin-right: auto; }
 .nav a[aria-current="page"], .nav a:hover { color: var(--ink); }
 
 /* hero */
