@@ -5,7 +5,9 @@ Landing page for jordan ruined it — mixing, mastering, production. Static HTML
 ```
 index.html              home: hero, work grid, contact
 info.html               services, how to send files, artist list  (served at /info)
-cool-shit.html          downloads page (served at /cool-shit)
+cool-shit/index.html    downloads grid (served at /cool-shit/)
+cool-shit/ruined-player.html  Ruined Player page (/cool-shit/ruined-player)
+assets/downloads/       download images
 assets/style.css        all styles (light grayscale palette in :root)
 assets/site.js          swaps the static work grid / artist list for live Spotify data
 assets/RiverSHINE.ttf   display font
