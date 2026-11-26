@@ -25,7 +25,7 @@ const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
 const HIDDEN_ARTISTS = new Set(['jordan_ruined_it']);
 const GRID_TRACKS = 13;
 const SPOTIFY_TIMEOUT_MS = 6000;
-const MIN_GAP_MS = 20 * 1000;              // guard: arrivals within 20s of a check reuse its answer
+const MIN_GAP_MS = 60 * 1000;              // no new check within 1 minute of the last one
 const STATE_KEEP_SECONDS = 60 * 60 * 24 * 30;
 
 export async function onRequestGet({ request, env }) {
