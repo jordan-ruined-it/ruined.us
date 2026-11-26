@@ -91,9 +91,10 @@ a { color: var(--ink); }
 .tile--skeleton, .tile.is-pending { background: #C6C6C6; }
 .tile--skeleton::after, .tile.is-pending::after {
   content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
-  background: linear-gradient(100deg, rgba(240,240,240,0) 25%, rgba(240,240,240,.85) 50%, rgba(240,240,240,0) 75%);
+  left: -50%; right: -50%;
+  background: linear-gradient(100deg, rgba(240,240,240,0) 5%, rgba(240,240,240,.85) 50%, rgba(240,240,240,0) 95%);
   transform: translateX(-100%);
-  animation: shimmer 1.4s ease-in-out infinite;
+  animation: shimmer 1.6s ease-in-out infinite;
   animation-delay: calc(var(--i, 0) * 90ms);
 }
 @keyframes shimmer { to { transform: translateX(100%); } }
