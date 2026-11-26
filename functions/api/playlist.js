@@ -1,6 +1,9 @@
-// GET /api/playlist
-// Reads the portfolio playlist from Spotify on the server, so no Spotify keys
-// reach the browser. Not cached: every request reads the playlist fresh.
+// GET /api/playlist            whole playlist + artist list (info page)
+// GET /api/playlist?scope=grid  first 13 tracks only (home page): one Spotify call, fast
+// Reads the playlist from Spotify on the server, so no Spotify keys reach the browser.
+// Every request reads Spotify fresh. If Spotify fails or is slow, the last good
+// answer is served instead (marked "stale": true), so the page never falls back
+// to an old hard-coded list.
 //
 // Cloudflare Pages → Settings → Variables and Secrets:
 //   SPOTIFY_CLIENT_ID       required
@@ -13,15 +16,21 @@ import { tokenRequest, spotifyError } from '../../lib/spotify.js';
 
 const DEFAULT_PLAYLIST = '2USDDnrlxhw82ydTl5TfbN';
 const HIDDEN_ARTISTS = new Set(['jordan_ruined_it']);
+const GRID_TRACKS = 13;
+const SPOTIFY_TIMEOUT_MS = 6000;
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ request, env, waitUntil }) {
+  const scope = new URL(request.url).searchParams.get('scope') === 'grid' ? 'grid' : 'all';
+  const lastGoodKey = new Request(new URL(`/api/playlist/last-good?scope=${scope}`, request.url).toString());
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+
   if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET) {
     return json({ error: 'Spotify credentials are not configured.' }, 500);
   }
 
   try {
     const token = await getAccessToken(env);
-    const items = await getAllItems(env.SPOTIFY_PLAYLIST_ID || DEFAULT_PLAYLIST, token);
+    const items = await getAllItems(env.SPOTIFY_PLAYLIST_ID || DEFAULT_PLAYLIST, token, scope === 'grid' ? GRID_TRACKS : Infinity);
 
     const tracks = items
       .map((item) => item.track)
@@ -37,13 +46,32 @@ export async function onRequestGet({ env }) {
       .filter((name) => name && !HIDDEN_ARTISTS.has(name))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
-    return json({ tracks, artists });
+    const body = scope === 'grid' ? { tracks } : { tracks, artists };
+    if (cache) {
+      // remember this answer for a week, to fall back on if Spotify has a bad moment
+      const keep = json(body, 200, { 'Cache-Control': 'public, max-age=604800' });
+      waitUntil(cache.put(lastGoodKey, keep).catch(() => {}));
+    }
+    return json(body);
   } catch (err) {
-    // The reason is Spotify's own error text (e.g. "token 400: invalid_grant"); it never contains the keys.
+    // The reason is Spotify's own error text (e.g. "playlist 429: API rate limit exceeded"); it never contains the keys.
     console.error('playlist failed:', err.message);
     memo = { token: null, expires: 0, key: '' }; // get a fresh login next time
+    const last = cache ? await cache.match(lastGoodKey).catch(() => null) : null;
+    if (last) {
+      const body = await last.json();
+      return json({ ...body, stale: true, reason: err.message });
+    }
     return json({ error: 'Could not load playlist.', reason: err.message }, 502);
   }
+}
+
+function fetchWithTimeout(url, opts = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), SPOTIFY_TIMEOUT_MS);
+  return fetch(url, { ...opts, signal: ctrl.signal })
+    .catch((e) => { throw new Error(e.name === 'AbortError' ? `timeout after ${SPOTIFY_TIMEOUT_MS / 1000}s` : e.message); })
+    .finally(() => clearTimeout(timer));
 }
 
 // Spotify's access token lasts an hour. Keep it in memory and reuse it until
@@ -70,19 +98,22 @@ async function getAccessToken(env) {
 
 // Spotify renamed the playlist endpoint in Feb 2026 (/tracks → /items, track → item).
 // Try the new one first; fall back to the old one for apps that still have it.
-async function getAllItems(playlistId, token) {
+async function getAllItems(playlistId, token, max = Infinity) {
   try {
     return await pageThrough(
-      `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=50`,
+      `https://api.spotify.com/v1/playlists/${playlistId}/items?limit=${Math.min(50, max)}`,
       token,
       (entry) => entry && (entry.item || entry.track),
+      max,
     );
   } catch (err) {
+    if (/^timeout/.test(err.message)) throw err; // Spotify is slow, not refusing: don't wait twice
     try {
       return await pageThrough(
-        `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`,
+        `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=${Math.min(100, max)}`,
         token,
         (entry) => entry && entry.track,
+        max,
       );
     } catch {
       throw err; // report the /items error, which is the current endpoint
@@ -90,10 +121,10 @@ async function getAllItems(playlistId, token) {
   }
 }
 
-async function pageThrough(url, token, pick) {
+async function pageThrough(url, token, pick, max = Infinity) {
   const out = [];
-  while (url) {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  while (url && out.length < max) {
+    const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`playlist ${res.status}: ${await spotifyError(res)}`);
     const page = await res.json();
     for (const entry of page.items || []) {
@@ -102,7 +133,7 @@ async function pageThrough(url, token, pick) {
     }
     url = page.next;
   }
-  return out;
+  return out.slice(0, max);
 }
 
 // Prefer the ~640px cover; fall back to whatever is there.

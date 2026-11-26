@@ -1,7 +1,7 @@
-// The work grid starts as pulsing placeholder squares and fills in from the
-// live Spotify playlist (/api/playlist). Each tile keeps pulsing until its
-// cover has loaded, then fades in. If the API can't be reached, the grid
-// falls back to the copy below so the page never stays empty.
+// The work grid starts as loading squares and fills in from the live Spotify
+// playlist (/api/playlist). Each tile keeps its loading shimmer until its cover
+// has loaded, then fades in. There is no hard-coded track list: if the API
+// can't answer, the loading squares stay up and it retries in the background.
 (function () {
   var grid = document.getElementById('grid');
   var artists = document.getElementById('artists');
@@ -9,36 +9,33 @@
 
   var TILE_COUNT = 13; // 1 featured + 12 squares
 
-  var FALLBACK = [
-    ['Leyla Diamondi', 'Baggage', '6yUZzWzDzswwrntHbBtcwa'],
-    ['J. Worra', 'Who Told You To Stop?', '0466CuA7OpSt4n4jnnvwI1'],
-    ['deadmau5', 'Science - Julian Gray Remix', '1kg5X3KvnoJsYEqbVKaIWU'],
-    ['Quackson', 'Chains', '3BN8ZvwgmKKr6GWAzYmzxK'],
-    ['Black Tiger Sex Machine', 'Matrix', '1wYgYBJvA13mMVHpYesTAt'],
-    ['Anyma', 'Entropy (feat. fknsyd)', '2kzAsTCD7e8UiPap8BmDZl'],
-    ['Rezz', 'SICK FUCK', '77A94wc7fOY0vuMffWELYJ'],
-    ['Sam WOLFE', 'Control Delete', '5vnDCSPfq2BXo9gAGO7RM9'],
-    ['BROSA', 'So Much Ice', '3FjGmI3YyXVs3JrJyu0mC9'],
-    ['ARMNHMR', 'You Broke My Heart', '4Gm2RznRAbEj9VmgRXF2fG'],
-    ['Maria Domark', 'i just wanna fly', '57j0wlW9njvUd4Q4VXCmFx'],
-    ['Kyle Cooke', 'Summer Should Be Fun', '0kP8ZEO3PJYz8H2Hyc9bI5'],
-    ["Colleen D'agostino", 'Secret', '6ItTC3ftYpFtYEThtr27Mx']
-  ].map(function (t) {
-    return { artist: t[0], title: t[1], url: 'https://open.spotify.com/track/' + t[2], image: null };
-  });
 
-  fetch('/api/playlist')
-    .then(function (res) { return res.ok ? res.json() : null; })
-    .catch(function () { return null; })
-    .then(function (data) {
-      if (grid) {
-        var tracks = data && data.tracks && data.tracks.length ? data.tracks : FALLBACK;
-        renderGrid(tracks.slice(0, TILE_COUNT));
-      }
-      if (artists && data && data.artists && data.artists.length) {
-        artists.textContent = data.artists.join('  /  ');
-      }
-    });
+  // home page only needs the first 13 tracks (one quick Spotify call);
+  // the info page needs the whole playlist for its artist list
+  var url = grid ? '/api/playlist?scope=grid' : '/api/playlist';
+  var attempt = 0;
+  load();
+
+  function load() {
+    var ctrl = 'AbortController' in window ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 12000);
+    fetch(url, ctrl ? { signal: ctrl.signal } : {})
+      .then(function (res) { return res.ok ? res.json() : null; })
+      .catch(function () { return null; })
+      .then(function (data) {
+        clearTimeout(timer);
+        var ok = data && data.tracks && data.tracks.length;
+        if (grid && ok) renderGrid(data.tracks.slice(0, TILE_COUNT));
+        if (artists && data && data.artists && data.artists.length) {
+          artists.textContent = data.artists.join('  /  ');
+        }
+        // no answer: the loading squares stay up and we quietly try again (3s, 6s, 12s… up to a minute apart)
+        if (!ok && attempt < 8) {
+          attempt++;
+          setTimeout(load, Math.min(60000, 1500 * Math.pow(2, attempt)));
+        }
+      });
+  }
 
   function renderGrid(tracks) {
     var frag = document.createDocumentFragment();
