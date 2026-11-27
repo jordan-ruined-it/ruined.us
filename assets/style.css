@@ -120,7 +120,7 @@ a { color: var(--ink); }
 /* downloads (cool shit) */
 .grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .tile--wide { grid-column: 1 / -1; aspect-ratio: 1420 / 1066; }
-.tile--static img, .tile--static:hover img, .tile--static:focus-visible img { filter: none; opacity: 1; }
+.tile--static img { opacity: .55; }   /* same faded grey as the work grid; colour comes back on hover */
 @media (max-width: 640px) {
   .grid--3 { grid-template-columns: minmax(0, 1fr); }
 }
