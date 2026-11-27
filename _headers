@@ -20,3 +20,7 @@
   Cache-Control: public, max-age=0, must-revalidate
 /assets/site.js
   Cache-Control: public, max-age=0, must-revalidate
+
+# Downloads are versioned in the filename (ruined-player-1.0.zip), so they can be cached hard.
+/assets/downloads/*
+  Cache-Control: public, max-age=31536000, immutable
