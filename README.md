@@ -10,7 +10,6 @@ cool-shit/ruined-player.html  Ruined Player page (/cool-shit/ruined-player)
 assets/downloads/       download images
 assets/style.css        all styles (light grayscale palette in :root)
 assets/site.js          swaps the static work grid / artist list for live Spotify data
-assets/RiverSHINE.ttf   display font
 assets/icon.svg        site icon (favicon.ico and apple-touch-icon.png at the root)
 assets/studio.jpg       studio photo for /info  (add this file)
 functions/api/playlist.js   GET /api/playlist → { tracks, artists }: answers from the saved playlist;

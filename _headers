@@ -4,8 +4,6 @@
   X-Frame-Options: DENY
 
 # Font and images rarely change: browsers may keep them for a day.
-/assets/RiverSHINE.ttf
-  Cache-Control: public, max-age=86400
 /assets/studio.jpg
   Cache-Control: public, max-age=86400
 /assets/icon.svg
